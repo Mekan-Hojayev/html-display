@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#000000">
+  <title>Clock</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --neon: #00ffe7;
+      --neon2: #ff2d78;
+      --bg: #050810;
+      --panel: rgba(0,255,231,0.04);
+      --glow: 0 0 20px rgba(0,255,231,0.5), 0 0 60px rgba(0,255,231,0.2);
+      --glow2: 0 0 20px rgba(255,45,120,0.5), 0 0 60px rgba(255,45,120,0.2);
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      overflow: hidden;
+      font-family: 'Orbitron', monospace;
+      color: var(--neon);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      touch-action: manipulation;
+    }
+
+    /* Animated grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(0,255,231,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,255,231,0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      animation: gridMove 20s linear infinite;
+      pointer-events: none;
+    }
+
+    /* Radial glow center */
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(0,255,231,0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    @keyframes gridMove {
+      0% { transform: translateY(0); }
+      100% { transform: translateY(40px); }
+    }
+
+    .clock-wrap {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      animation: fadeIn 1.2s ease both;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(30px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Corner brackets decoration */
+    .bracket {
+      position: absolute;
+      width: 60px; height: 60px;
+      border-color: var(--neon);
+      border-style: solid;
+      opacity: 0.4;
+    }
+    .bracket.tl { top: -20px; left: -20px; border-width: 2px 0 0 2px; }
+    .bracket.tr { top: -20px; right: -20px; border-width: 2px 2px 0 0; }
+    .bracket.bl { bottom: -20px; left: -20px; border-width: 0 0 2px 2px; }
+    .bracket.br { bottom: -20px; right: -20px; border-width: 0 2px 2px 0; }
+
+    .time-container {
+      position: relative;
+      padding: 20px 30px;
+    }
+
+    /* HH:MM */
+    .main-time {
+      font-size: clamp(72px, 22vw, 130px);
+      font-weight: 900;
+      letter-spacing: 0.04em;
+      line-height: 1;
+      color: var(--neon);
+      text-shadow: var(--glow);
+      font-variant-numeric: tabular-nums;
+      position: relative;
+    }
+
+    /* Subtle scanline flicker on digits */
+    .main-time::after {
+      content: attr(data-time);
+      position: absolute;
+      inset: 0;
+      color: var(--neon);
+      opacity: 0;
+      animation: scanFlicker 4s infinite;
+      pointer-events: none;
+    }
+
+    @keyframes scanFlicker {
+      0%, 96%, 100% { opacity: 0; }
+      97% { opacity: 0.15; transform: translateY(-2px); }
+      98% { opacity: 0; }
+      99% { opacity: 0.1; transform: translateY(1px); }
+    }
+
+    /* Colon pulse */
+    .colon {
+      display: inline-block;
+      animation: colonBlink 1s step-start infinite;
+      color: var(--neon2);
+      text-shadow: var(--glow2);
+      margin: 0 -4px;
+    }
+
+    @keyframes colonBlink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.15; }
+    }
+
+    /* Seconds row */
+    .seconds-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .sec-label {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.3em;
+      color: rgba(0,255,231,0.4);
+      text-transform: uppercase;
+    }
+
+    .seconds {
+      font-size: clamp(36px, 11vw, 64px);
+      font-weight: 700;
+      color: var(--neon2);
+      text-shadow: var(--glow2);
+      letter-spacing: 0.06em;
+      min-width: 2ch;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Seconds progress bar */
+    .sec-bar-wrap {
+      width: clamp(200px, 70vw, 380px);
+      height: 3px;
+      background: rgba(255,45,120,0.1);
+      border-radius: 2px;
+      margin-top: 10px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .sec-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--neon2), var(--neon));
+      border-radius: 2px;
+      box-shadow: 0 0 8px var(--neon2);
+      transition: width 0.5s linear;
+    }
+
+    /* Date row */
+    .date-row {
+      margin-top: 28px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: clamp(13px, 4vw, 18px);
+      letter-spacing: 0.25em;
+      color: rgba(0,255,231,0.55);
+      text-transform: uppercase;
+    }
+
+    /* Day of week */
+    .day-row {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: clamp(10px, 3vw, 13px);
+      letter-spacing: 0.4em;
+      color: rgba(255,45,120,0.6);
+      text-transform: uppercase;
+      margin-top: 6px;
+    }
+
+    /* Bottom status line */
+    .status {
+      position: fixed;
+      bottom: 24px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.3em;
+      color: rgba(0,255,231,0.2);
+      text-transform: uppercase;
+    }
+
+    /* Tap to toggle 12/24hr */
+    .mode-btn {
+      margin-top: 32px;
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.25em;
+      color: rgba(0,255,231,0.3);
+      border: 1px solid rgba(0,255,231,0.15);
+      padding: 8px 18px;
+      border-radius: 2px;
+      cursor: pointer;
+      user-select: none;
+      transition: all 0.2s;
+      background: transparent;
+      text-transform: uppercase;
+    }
+    .mode-btn:active {
+      color: var(--neon);
+      border-color: var(--neon);
+      background: rgba(0,255,231,0.08);
+      box-shadow: var(--glow);
+    }
+
+    /* Keep screen awake hint */
+    @media (max-width: 500px) {
+      .seconds { font-size: 44px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="clock-wrap">
+  <div class="time-container">
+    <div class="bracket tl"></div>
+    <div class="bracket tr"></div>
+    <div class="bracket bl"></div>
+    <div class="bracket br"></div>
+
+    <div class="main-time" id="mainTime" data-time="00:00"></div>
+  </div>
+
+  <div class="seconds-row">
+    <span class="sec-label">SEC</span>
+    <span class="seconds" id="seconds">00</span>
+  </div>
+
+  <div class="sec-bar-wrap">
+    <div class="sec-bar" id="secBar" style="width:0%"></div>
+  </div>
+
+  <div class="date-row" id="dateRow">---</div>
+  <div class="day-row" id="dayRow">---</div>
+
+  <button class="mode-btn" id="modeBtn" onclick="toggleMode()">12H / 24H</button>
+</div>
+
+<div class="status" id="status">CLOCK &nbsp;·&nbsp; TAP TO SWITCH MODE</div>
+
+<script>
+  let use24 = true;
+  const days = ['SUNDAY','MONDAY','TUESDAY','WEDNESDAY','THURSDAY','FRIDAY','SATURDAY'];
+  const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+  function pad(n) { return String(n).padStart(2,'0'); }
+
+  function toggleMode() {
+    use24 = !use24;
+    document.getElementById('modeBtn').textContent = use24 ? '→ 12H MODE' : '→ 24H MODE';
+  }
+
+  function tick() {
+    const now = new Date();
+    let h = now.getHours();
+    const m = now.getMinutes();
+    const s = now.getSeconds();
+    let suffix = '';
+
+    if (!use24) {
+      suffix = h >= 12 ? ' PM' : ' AM';
+      h = h % 12 || 12;
+    }
+
+    const timeStr = pad(h) + ':' + pad(m);
+    const el = document.getElementById('mainTime');
+    // inject colon with separate span
+    el.innerHTML = pad(h) + '<span class="colon">:</span>' + pad(m) + (suffix ? `<span style="font-size:0.35em;opacity:0.7;vertical-align:middle;">${suffix}</span>` : '');
+    el.dataset.time = timeStr;
+
+    document.getElementById('seconds').textContent = pad(s);
+    document.getElementById('secBar').style.width = ((s / 59) * 100) + '%';
+
+    const d = now.getDate();
+    const mo = months[now.getMonth()];
+    const yr = now.getFullYear();
+    document.getElementById('dateRow').textContent = mo + ' ' + pad(d) + ' · ' + yr;
+    document.getElementById('dayRow').textContent = days[now.getDay()];
+  }
+
+  tick();
+  setInterval(tick, 500);
+
+  // Prevent screen dim (Wake Lock API)
+  async function keepAwake() {
+    try {
+      if ('wakeLock' in navigator) {
+        await navigator.wakeLock.request('screen');
+      }
+    } catch(e) {}
+  }
+  keepAwake();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') keepAwake();
+  });
+</script>
+</body>
+</html>
