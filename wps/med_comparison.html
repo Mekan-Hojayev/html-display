@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Сравнение анализов крови</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --surface: #ffffff;
+    --border: #e2e8f0;
+    --text: #1e293b;
+    --muted: #64748b;
+    --accent: #3b82f6;
+    --same-bg: #ffffff;
+    --diff-bg: #fef3c7;
+    --diff-border: #f59e0b;
+    --low-bg: #fff1f2;
+    --low-border: #f43f5e;
+    --ok-bg: #f0fdf4;
+    --ok-border: #22c55e;
+    --header-old: #dbeafe;
+    --header-new: #dcfce7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  .app-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .app-header h1 { font-size: 16px; font-weight: 700; color: var(--accent); }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .pill {
+    padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600;
+    cursor: pointer; border: 1px solid transparent; transition: all .15s;
+  }
+  .pill.active { opacity: 1; }
+  .pill.inactive { opacity: 0.4; }
+  .pill-all    { background: #ede9fe; color: #7c3aed; border-color: #c4b5fd; }
+  .pill-diff   { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .pill-same   { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
+  .pill-only   { background: #fff1f2; color: #9f1239; border-color: #fda4af; }
+
+  .meta-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    padding: 16px 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  .meta-card {
+    background: var(--surface);
+    border-radius: 8px;
+    padding: 14px 18px;
+    border: 1px solid var(--border);
+  }
+  .meta-card.old { border-top: 3px solid #3b82f6; }
+  .meta-card.new { border-top: 3px solid #22c55e; }
+  .meta-card h3 { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .meta-row { display: flex; gap: 8px; margin-bottom: 4px; }
+  .meta-label { color: var(--muted); font-size: 11px; min-width: 120px; }
+  .meta-value { font-weight: 600; font-size: 12px; }
+
+  .stats-bar {
+    display: flex; gap: 12px; padding: 0 24px 12px; max-width: 1400px; margin: 0 auto;
+    flex-wrap: wrap;
+  }
+  .stat-chip {
+    padding: 6px 14px; border-radius: 6px; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .stat-chip .num { font-size: 18px; }
+  .sc-diff { background: #fef3c7; color: #92400e; }
+  .sc-same { background: #f0fdf4; color: #166534; }
+  .sc-only-old { background: #dbeafe; color: #1e40af; }
+  .sc-only-new { background: #d1fae5; color: #065f46; }
+
+  .table-wrap {
+    padding: 0 24px 32px;
+    max-width: 1400px;
+    margin: 0 auto;
+    overflow-x: auto;
+  }
+  table.comp {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--surface);
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  }
+  table.comp thead tr th {
+    padding: 10px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .th-param { background: #f1f5f9; color: var(--muted); text-align: left; width: 26%; }
+  .th-old   { background: var(--header-old); color: #1e40af; text-align: center; width: 14%; }
+  .th-ref-old { background: var(--header-old); color: #1e40af; text-align: center; width: 14%; }
+  .th-sep   { background: #f1f5f9; width: 2%; }
+  .th-new   { background: var(--header-new); color: #166534; text-align: center; width: 14%; }
+  .th-ref-new { background: var(--header-new); color: #166534; text-align: center; width: 14%; }
+  .th-delta { background: #f8fafc; color: var(--muted); text-align: center; width: 10%; }
+  .th-status { background: #f8fafc; color: var(--muted); text-align: center; width: 6%; }
+
+  table.comp tbody tr { transition: background .1s; }
+  table.comp tbody tr:hover { filter: brightness(0.97); }
+
+  table.comp tbody td {
+    padding: 9px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+    line-height: 1.4;
+  }
+  .td-param { font-weight: 500; color: var(--text); }
+  .td-abbr { display: block; font-size: 10px; color: var(--muted); font-style: italic; margin-top: 2px; }
+  .td-val { text-align: center; font-family: 'Courier New', monospace; font-weight: 700; font-size: 13px; }
+  .td-ref { text-align: center; font-size: 11px; color: var(--muted); }
+  .td-unit { text-align: center; font-size: 11px; color: var(--muted); }
+  .td-delta { text-align: center; font-size: 12px; font-weight: 600; font-family: monospace; }
+  .td-status { text-align: center; }
+  .td-sep { background: #f8fafc; }
+
+  /* Row types */
+  tr.row-diff td { background: #fffbeb; }
+  tr.row-diff td.td-param { border-left: 3px solid var(--diff-border); }
+  tr.row-same td { background: #ffffff; }
+  tr.row-only-old td { background: #eff6ff; opacity: 0.8; }
+  tr.row-only-old td.td-param { border-left: 3px solid #93c5fd; }
+  tr.row-only-new td { background: #f0fdf4; opacity: 0.8; }
+  tr.row-only-new td.td-param { border-left: 3px solid #86efac; }
+
+  .val-diff-highlight { color: #b45309; }
+  .val-up   { color: #dc2626; }
+  .val-down { color: #2563eb; }
+  .val-ok   { color: #16a34a; }
+
+  .delta-up   { color: #dc2626; }
+  .delta-down { color: #2563eb; }
+  .delta-eq   { color: #94a3b8; }
+
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; white-space: nowrap;
+  }
+  .badge-diff { background: #fef3c7; color: #92400e; }
+  .badge-same { background: #f0fdf4; color: #166534; }
+  .badge-only-old { background: #dbeafe; color: #1e40af; }
+  .badge-only-new { background: #d1fae5; color: #065f46; }
+  .badge-abnormal { background: #fff1f2; color: #be123c; }
+
+  .section-header td {
+    background: #f8fafc;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tooltip-trigger { cursor: help; border-bottom: 1px dashed #94a3b8; }
+
+  @media (max-width: 700px) {
+    .meta-section { grid-template-columns: 1fr; }
+    .table-wrap { padding: 0 8px 24px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <h1>🩸 Сравнение анализов крови</h1>
+  <div class="pills">
+    <div class="pill pill-all active" onclick="filterRows('all', this)">Все параметры</div>
+    <div class="pill pill-diff" onclick="filterRows('diff', this)">Только различия</div>
+    <div class="pill pill-same" onclick="filterRows('same', this)">Совпадают</div>
+    <div class="pill pill-only" onclick="filterRows('only', this)">Только в одном</div>
+  </div>
+</div>
+
+<div class="meta-section">
+  <div class="meta-card old">
+    <h3>◂ Предыдущий анализ</h3>
+    <div class="meta-row"><span class="meta-label">Источник:</span><span class="meta-value">НСС (форма ТЕСТ №5)</span></div>
+    <div class="meta-row"><span class="meta-label">Пациент:</span><span class="meta-value">ФАМИЛИЯ ИМЯ ОТЧЕСТВО</span></div>
+    <div class="meta-row"><span class="meta-label">Дата взятия:</span><span class="meta-value">ДД.ММ.ГГГГ</span></div>
+    <div class="meta-row"><span class="meta-label">Параметров:</span><span class="meta-value">9 показателей</span></div>
+  </div>
+  <div class="meta-card new">
+    <h3>▸ Новый анализ</h3>
+    <div class="meta-row"><span class="meta-label">Источник:</span><span class="meta-value">LabQuest (АО "ЛабКвест")</span></div>
+    <div class="meta-row"><span class="meta-label">Пациент:</span><span class="meta-value">ТЕСТ, Ж, 35 л.</span></div>
+    <div class="meta-row"><span class="meta-label">Дата взятия:</span><span class="meta-value">04.03.2025</span></div>
+    <div class="meta-row"><span class="meta-label">Параметров:</span><span class="meta-value">27 показателей</span></div>
+  </div>
+</div>
+
+<div class="stats-bar">
+  <div class="stat-chip sc-diff"><span class="num" id="count-diff">0</span> изменились</div>
+  <div class="stat-chip sc-same"><span class="num" id="count-same">0</span> совпали</div>
+  <div class="stat-chip sc-only-old"><span class="num" id="count-old">0</span> только в старом</div>
+  <div class="stat-chip sc-only-new"><span class="num" id="count-new">0</span> только в новом</div>
+</div>
+
+<div class="table-wrap">
+<table class="comp" id="main-table">
+<thead>
+  <tr>
+    <th class="th-param">Параметр</th>
+    <th class="th-old">Старый результат</th>
+    <th class="th-ref-old">Референс (старый)</th>
+    <th class="th-old" style="width:8%">Ед. (стар.)</th>
+    <th class="th-sep"></th>
+    <th class="th-new">Новый результат</th>
+    <th class="th-ref-new">Референс (новый)</th>
+    <th class="th-new" style="width:8%">Ед. (нов.)</th>
+    <th class="th-delta">Δ изменение</th>
+    <th class="th-status">Статус</th>
+  </tr>
+</thead>
+<tbody id="tbody">
+</tbody>
+</table>
+</div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+const OLD = [
+  { name: 'Гематокрит',                abbr: 'Ht',      val: 36.0,  unit: '%',        ref: '35.0–45.0' },
+  { name: 'Гемоглобин',                abbr: 'Hb',      val: 11.7,  unit: 'г/дл',     ref: '11.7–15.5' },
+  { name: 'Эритроциты',                abbr: 'RBC',     val: 4.24,  unit: 'мнл/мкл',  ref: '3.80–5.10' },
+  { name: 'Средний объем эритроцита',   abbr: 'MCV',     val: 84.9,  unit: 'фл',       ref: '81.0–100.0' },
+  { name: 'Ширина распределения эритроцитов', abbr: 'RDW', val: 13.8, unit: '%',       ref: '11.6–14.8' },
+  { name: 'Среднее содержание Hb в эритроците', abbr: 'MCH', val: 27.6, unit: 'пг',   ref: '27.0–34.0' },
+  { name: 'Средняя концентрация Hb в эритроцитах', abbr: 'MCHC', val: 32.5, unit: 'г/дл', ref: '32.0–36.0' },
+  { name: 'Тромбоциты',                abbr: 'PLT',     val: 326,   unit: 'тыс/мкл',  ref: '150–400' },
+  { name: 'Лейкоциты',                 abbr: 'WBC',     val: 6.90,  unit: 'тыс/мкл',  ref: '4.50–11.00' },
+];
+
+const NEW = [
+  { name: 'Лейкоциты',                            abbr: 'WBC',      val: 6.87,  unit: '10⁹/л',  ref: '3.89–9.23' },
+  { name: 'Эритроциты',                            abbr: 'RBC',      val: 4.74,  unit: '10¹²/л', ref: '3.83–4.86' },
+  { name: 'Гемоглобин',                            abbr: 'Hb',       val: 126,   unit: 'г/л',    ref: '121–149' },
+  { name: 'Гематокрит',                            abbr: 'Ht',       val: 40.6,  unit: '%',      ref: '34.8–44.3' },
+  { name: 'Средний объем эритроцита',               abbr: 'MCV',      val: 85.7,  unit: 'фл',     ref: '81.3–100.1' },
+  { name: 'Среднее содержание Hb в эритроците',    abbr: 'MCH',      val: 26.6,  unit: 'пг',     ref: '26.0–33.6' },
+  { name: 'Средняя концентрация Hb в эритроцитах', abbr: 'MCHC',    val: 310,   unit: 'г/л',    ref: '306–338' },
+  { name: 'Ширина распределения эритроцитов',      abbr: 'RDW CV',   val: 12.6,  unit: '%',      ref: '11.2–15.6' },
+  { name: 'Бластные клетки',                       abbr: null,        val: 0,     unit: '%',      ref: '0' },
+  { name: 'Промиелоциты',                          abbr: null,        val: 0,     unit: '%',      ref: '0' },
+  { name: 'Миелоциты',                             abbr: null,        val: 0,     unit: '%',      ref: '0' },
+  { name: 'Метамиелоциты',                         abbr: null,        val: 0,     unit: '%',      ref: '0' },
+  { name: 'Палочкоядерные нейтрофилы',             abbr: null,        val: 1,     unit: '%',      ref: '1–5' },
+  { name: 'Сегментоядерные нейтрофилы',            abbr: null,        val: 51,    unit: '%',      ref: '41–70' },
+  { name: 'Лимфоциты',                             abbr: null,        val: 39,    unit: '%',      ref: '20–47' },
+  { name: 'Моноциты',                              abbr: null,        val: 6,     unit: '%',      ref: '4–11' },
+  { name: 'Эозинофилы',                            abbr: null,        val: 3,     unit: '%',      ref: '0–10' },
+  { name: 'Базофилы',                              abbr: null,        val: 0,     unit: '%',      ref: '0–2' },
+  { name: 'Плазматические клетки',                 abbr: null,        val: 0,     unit: '%',      ref: '0' },
+  { name: 'Абс. нейтрофилы',                       abbr: 'ANC',       val: 3.57,  unit: '10⁹/л',  ref: '1.78–6.04' },
+  { name: 'Абс. лимфоциты',                        abbr: 'ALC',       val: 2.68,  unit: '10⁹/л',  ref: '1.39–3.15' },
+  { name: 'Абс. моноциты',                         abbr: 'AMC',       val: 0.41,  unit: '10⁹/л',  ref: '0.24–0.72' },
+  { name: 'Абс. эозинофилы',                       abbr: 'AEC',       val: 0.21,  unit: '10⁹/л',  ref: '0.01–0.59' },
+  { name: 'Абс. базофилы',                         abbr: 'ABC',       val: 0.00,  unit: '10⁹/л',  ref: '0.00–0.09' },
+  { name: 'Тромбоциты',                            abbr: 'PLT',       val: 238,   unit: '10⁹/л',  ref: '158–387' },
+  { name: 'Средний объем тромбоцитов',             abbr: 'MPV',       val: 10.2,  unit: 'фл',     ref: '9.6–12' },
+  { name: 'СОЭ',                                   abbr: 'ESR',       val: 6,     unit: 'мм/час', ref: '<30' },
+];
+
+// Match by abbreviation
+const ABBR_MATCH = {
+  'Ht': 'Ht', 'Hb': 'Hb', 'RBC': 'RBC', 'MCV': 'MCV',
+  'MCH': 'MCH', 'MCHC': 'MCHC', 'PLT': 'PLT', 'WBC': 'WBC',
+  'RDW': 'RDW CV',
+};
+
+// Normalize Hb: old is g/dl, new is g/l (×10)
+// Normalize MCHC: old is g/dl, new is g/l (×10)
+// WBC: old is тыс/мкл (= 10⁹/л same numeric), PLT тыс/мкл = 10⁹/л same
+// So only Hb and MCHC need normalization
+
+function normOldVal(abbr, val) {
+  if (abbr === 'Hb')   return val * 10;    // g/dl → g/l
+  if (abbr === 'MCHC') return val * 10;    // g/dl → g/l
+  return val;
+}
+
+function fmtDelta(old, nw) {
+  const diff = nw - old;
+  if (Math.abs(diff) < 0.001) return { text: '—', cls: 'delta-eq' };
+  const pct = old !== 0 ? ((diff / old) * 100).toFixed(1) : '∞';
+  const sign = diff > 0 ? '+' : '';
+  return { text: `${sign}${diff.toFixed(2)} (${sign}${pct}%)`, cls: diff > 0 ? 'delta-up' : 'delta-down' };
+}
+
+function checkRef(val, ref) {
+  if (!ref || ref === '0') return val <= 0 ? 'ok' : 'check';
+  if (ref.startsWith('<')) {
+    const limit = parseFloat(ref.replace('<','').trim());
+    return val < limit ? 'ok' : 'high';
+  }
+  const parts = ref.split(/[–-]/);
+  if (parts.length === 2) {
+    const lo = parseFloat(parts[0]);
+    const hi = parseFloat(parts[1]);
+    if (val < lo) return 'low';
+    if (val > hi) return 'high';
+    return 'ok';
+  }
+  return 'ok';
+}
+
+// Build matched rows
+const rows = [];
+
+// First: matched (abbr-based)
+const usedOld = new Set();
+const usedNew = new Set();
+
+for (const o of OLD) {
+  const matchAbbr = ABBR_MATCH[o.abbr];
+  const n = NEW.find(x => x.abbr === matchAbbr || x.abbr === o.abbr);
+  if (n) {
+    usedOld.add(o.abbr);
+    usedNew.add(n.abbr);
+    const normOld = normOldVal(o.abbr, o.val);
+    const deltaObj = fmtDelta(normOld, n.val);
+    const isDiff = Math.abs(normOld - n.val) > 0.001;
+    const refStatus = checkRef(n.val, n.ref);
+    rows.push({ type: isDiff ? 'diff' : 'same', old: o, new: n, normOld, delta: deltaObj, refStatus });
+  } else {
+    usedOld.add(o.abbr);
+    rows.push({ type: 'only-old', old: o, new: null });
+  }
+}
+
+// Only in new
+for (const n of NEW) {
+  if (!usedNew.has(n.abbr) || n.abbr === null) {
+    // check if already matched by name similarity
+    const alreadyMatched = rows.some(r => r.new === n);
+    if (!alreadyMatched) {
+      rows.push({ type: 'only-new', old: null, new: n });
+    }
+  }
+}
+
+// Separate into sections
+const matched   = rows.filter(r => r.type === 'diff' || r.type === 'same');
+const onlyOld   = rows.filter(r => r.type === 'only-old');
+const onlyNew   = rows.filter(r => r.type === 'only-new');
+
+// Count
+document.getElementById('count-diff').textContent = matched.filter(r=>r.type==='diff').length;
+document.getElementById('count-same').textContent = matched.filter(r=>r.type==='same').length;
+document.getElementById('count-old').textContent  = onlyOld.length;
+document.getElementById('count-new').textContent  = onlyNew.length;
+
+function valHtml(val, ref, unit) {
+  const status = checkRef(val, ref);
+  let cls = '';
+  let suffix = '';
+  if (status === 'high') { cls = 'val-up'; suffix = ' ▲'; }
+  if (status === 'low')  { cls = 'val-down'; suffix = ' ▼'; }
+  return `<span class="${cls}">${val}${suffix}</span>`;
+}
+
+function buildSection(title, sectionRows) {
+  if (!sectionRows.length) return '';
+  let html = `<tr class="section-header"><td colspan="10">${title}</td></tr>`;
+  for (const r of sectionRows) {
+    if (r.type === 'diff' || r.type === 'same') {
+      const o = r.old; const n = r.new;
+      const normOldDisplay = r.normOld !== o.val ? `${r.normOld}<br><small style="color:#94a3b8">(исх: ${o.val} ${o.unit})</small>` : o.val;
+      const badgeCls = r.type === 'diff' ? 'badge-diff' : 'badge-same';
+      const badgeText = r.type === 'diff' ? 'изм.' : '=';
+      const refNew = checkRef(n.val, n.ref);
+      const abnBadge = refNew !== 'ok' ? `<span class="badge badge-abnormal">${refNew === 'high' ? '▲ выше' : '▼ ниже'}</span>` : '';
+      html += `<tr class="row-${r.type}" data-type="${r.type}">
+        <td class="td-param">${n.name}${n.abbr ? `<span class="td-abbr">${n.abbr}</span>` : ''}</td>
+        <td class="td-val">${valHtml(r.normOld, o.ref, o.unit)}</td>
+        <td class="td-ref">${o.ref}</td>
+        <td class="td-unit">${n.unit.includes('г/л') || n.unit.includes('г/дл') ? n.unit : o.unit}</td>
+        <td class="td-sep"></td>
+        <td class="td-val ${r.type === 'diff' ? 'val-diff-highlight' : ''}">${valHtml(n.val, n.ref, n.unit)}</td>
+        <td class="td-ref">${n.ref}</td>
+        <td class="td-unit">${n.unit}</td>
+        <td class="td-delta ${r.delta.cls}">${r.delta.text}</td>
+        <td class="td-status"><span class="badge ${badgeCls}">${badgeText}</span>${abnBadge}</td>
+      </tr>`;
+    } else if (r.type === 'only-old') {
+      const o = r.old;
+      html += `<tr class="row-only-old" data-type="only">
+        <td class="td-param">${o.name}${o.abbr ? `<span class="td-abbr">${o.abbr}</span>` : ''}</td>
+        <td class="td-val">${o.val}</td>
+        <td class="td-ref">${o.ref}</td>
+        <td class="td-unit">${o.unit}</td>
+        <td class="td-sep"></td>
+        <td class="td-val" style="color:#94a3b8">—</td>
+        <td class="td-ref">—</td>
+        <td class="td-unit">—</td>
+        <td class="td-delta">—</td>
+        <td class="td-status"><span class="badge badge-only-old">только стар.</span></td>
+      </tr>`;
+    } else if (r.type === 'only-new') {
+      const n = r.new;
+      const refStatus = checkRef(n.val, n.ref);
+      const abnBadge = refStatus !== 'ok' ? `<span class="badge badge-abnormal">${refStatus === 'high' ? '▲' : '▼'}</span>` : '';
+      html += `<tr class="row-only-new" data-type="only">
+        <td class="td-param">${n.name}${n.abbr ? `<span class="td-abbr">${n.abbr}</span>` : ''}</td>
+        <td class="td-val" style="color:#94a3b8">—</td>
+        <td class="td-ref">—</td>
+        <td class="td-unit">—</td>
+        <td class="td-sep"></td>
+        <td class="td-val">${valHtml(n.val, n.ref, n.unit)}</td>
+        <td class="td-ref">${n.ref}</td>
+        <td class="td-unit">${n.unit}</td>
+        <td class="td-delta">—</td>
+        <td class="td-status"><span class="badge badge-only-new">только нов.</span>${abnBadge}</td>
+      </tr>`;
+    }
+  }
+  return html;
+}
+
+const tbody = document.getElementById('tbody');
+tbody.innerHTML =
+  buildSection('🔵 Совпадающие параметры с изменением значений', matched.filter(r=>r.type==='diff')) +
+  buildSection('🟢 Совпадающие параметры без изменений', matched.filter(r=>r.type==='same')) +
+  buildSection('📌 Только в старом анализе', onlyOld) +
+  buildSection('🆕 Только в новом анализе (расширенная панель)', onlyNew);
+
+// Filter
+function filterRows(mode, el) {
+  document.querySelectorAll('.pill').forEach(p => { p.classList.remove('active'); p.classList.add('inactive'); });
+  el.classList.remove('inactive'); el.classList.add('active');
+
+  const allRows = document.querySelectorAll('#tbody tr[data-type]');
+  allRows.forEach(r => {
+    const t = r.getAttribute('data-type');
+    if (mode === 'all') r.style.display = '';
+    else if (mode === 'diff') r.style.display = (t === 'diff') ? '' : 'none';
+    else if (mode === 'same') r.style.display = (t === 'same') ? '' : 'none';
+    else if (mode === 'only') r.style.display = (t === 'only') ? '' : 'none';
+  });
+  // Also hide/show section headers
+  document.querySelectorAll('#tbody tr.section-header').forEach(sh => {
+    let next = sh.nextElementSibling;
+    let hasVisible = false;
+    while (next && !next.classList.contains('section-header')) {
+      if (next.style.display !== 'none') { hasVisible = true; break; }
+      next = next.nextElementSibling;
+    }
+    sh.style.display = hasVisible ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>
