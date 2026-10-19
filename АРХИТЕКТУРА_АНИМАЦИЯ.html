@@ -1,0 +1,839 @@
+<title>Ядро распознавания по шагам</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@600;700&family=Golos+Text:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a step player. Scene of the customer's server on the left, narration on the right, controls under both; colours encode responsibility (ours / third-party engines / customer environment) */
+:root {
+  --bg: #F3F5F7;
+  --surface: #FFFFFF;
+  --fg: #16202A;
+  --fg2: #384552;
+  --muted: #64707D;
+  --line: #D5DBE2;
+  --line2: #E5E9EE;
+  --code-bg: #EBEFF3;
+  --term-bg: #18212A;
+  --term-fg: #DDE5EC;
+  --term-dim: #8C9AA7;
+  --term-ok: #7FD1A2;
+  --ours: #13698A;
+  --ours-tint: #DDEEF5;
+  --ours-wash: #EEF6F9;
+  --third: #8A3866;
+  --third-tint: #F4E3EC;
+  --cust: #8E680C;
+  --cust-tint: #F6EDD5;
+  --ok: #2E7D4F;
+  --ok-tint: #E2F2E8;
+  --heat: #F2C27E;
+  --font-display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --font-body: "Golos Text", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E141A; --surface: #151D25; --fg: #E5EAEF; --fg2: #C2CBD4; --muted: #8B98A5;
+    --line: #2B3742; --line2: #212B35; --code-bg: #1C2630;
+    --term-bg: #0A0F14; --term-fg: #DDE5EC; --term-dim: #7E8B97; --term-ok: #7FD1A2;
+    --ours: #63B6D6; --ours-tint: #133241; --ours-wash: #111F28;
+    --third: #E293BD; --third-tint: #3A1D2D;
+    --cust: #DDB34E; --cust-tint: #332810;
+    --ok: #6CC892; --ok-tint: #15301F; --heat: #7A4A12;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E141A; --surface: #151D25; --fg: #E5EAEF; --fg2: #C2CBD4; --muted: #8B98A5;
+  --line: #2B3742; --line2: #212B35; --code-bg: #1C2630;
+  --term-bg: #0A0F14; --term-fg: #DDE5EC; --term-dim: #7E8B97; --term-ok: #7FD1A2;
+  --ours: #63B6D6; --ours-tint: #133241; --ours-wash: #111F28;
+  --third: #E293BD; --third-tint: #3A1D2D;
+  --cust: #DDB34E; --cust-tint: #332810;
+  --ok: #6CC892; --ok-tint: #15301F; --heat: #7A4A12;
+  color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--fg); font: 16px/1.55 var(--font-body); padding-inline: 16px; }
+a { color: var(--ours); text-underline-offset: 2px; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--ours); outline-offset: 2px; }
+
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 26px 56px; }
+header { display: grid; gap: 8px; margin-bottom: 18px; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--ours); margin: 0; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(24px, 3.4vw, 34px); line-height: 1.15; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+.lede { margin: 0; color: var(--fg2); max-width: 70ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; white-space: nowrap; line-height: 1.6; }
+.chip i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip.ours { background: var(--ours-tint); color: var(--ours); } .chip.ours i { background: var(--ours); }
+.chip.third { background: var(--third-tint); color: var(--third); } .chip.third i { background: var(--third); }
+.chip.cust { background: var(--cust-tint); color: var(--cust); } .chip.cust i { background: var(--cust); }
+
+.player { display: grid; grid-template-columns: minmax(0, 1fr) 380px; grid-template-areas: "stage panel" "ctrl ctrl"; gap: 14px 18px; align-items: start; }
+.stage { grid-area: stage; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; min-width: 0; overflow: hidden; }
+.stage-bar { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line2); font-size: 13px; flex-wrap: wrap; }
+.stage-bar .ch { font-weight: 600; color: var(--fg2); }
+#modechip { transition: background .5s, color .5s; }
+.svgwrap { overflow-x: auto; padding: 8px; }
+.svgwrap svg { display: block; width: 100%; height: auto; }
+.panel { grid-area: panel; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.counter { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; margin: 0; }
+.panel h2 { font-family: var(--font-display); font-weight: 600; font-size: 19px; line-height: 1.3; margin: 0; text-wrap: balance; }
+.panel p.text { margin: 0; font-size: 15.5px; }
+.panel ul { margin: 0; padding-left: 18px; font-size: 14.5px; color: var(--fg2); display: grid; gap: 4px; }
+.term { margin: 0; background: var(--term-bg); color: var(--term-fg); font-family: var(--font-mono); font-size: 12px; line-height: 1.55; padding: 10px 12px; border-radius: 8px; overflow-x: auto; white-space: pre; min-height: 2.2em; }
+.term .p { color: var(--term-ok); }
+.term .o { color: var(--term-dim); }
+.term .cur { display: inline-block; width: .55em; background: var(--term-fg); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.code { margin: 0; background: var(--code-bg); font-family: var(--font-mono); font-size: 12.5px; padding: 9px 12px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.term-note { font-size: 12px; color: var(--muted); margin: -4px 0 0; }
+
+.controls { grid-area: ctrl; display: grid; gap: 10px; }
+.btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-size: 14.5px; font-weight: 600; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+.btn:hover { border-color: var(--ours); }
+.btn.primary { background: var(--ours); border-color: var(--ours); color: var(--surface); }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn svg { width: 14px; height: 14px; fill: currentColor; }
+.hint { font-size: 12.5px; color: var(--muted); margin-left: auto; }
+.chapters { display: flex; flex-wrap: wrap; gap: 6px; }
+.chapters button { font: inherit; font-size: 13px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--fg2); cursor: pointer; }
+.chapters button[aria-current="true"] { background: var(--ours-tint); border-color: var(--ours); color: var(--ours); font-weight: 600; }
+.segs { display: flex; gap: 3px; }
+.segs button { flex: 1; height: 8px; min-width: 0; padding: 0; border: 0; border-radius: 3px; background: var(--line); cursor: pointer; }
+.segs button.done { background: var(--ours); opacity: .45; }
+.segs button.cur { background: var(--ours); }
+.segs button.gap { margin-left: 7px; }
+.foot { margin-top: 18px; font-size: 13px; color: var(--muted); }
+
+@media (max-width: 1100px) {
+  .player { grid-template-columns: minmax(0, 1fr); grid-template-areas: "stage" "ctrl" "panel"; }
+}
+@media (max-width: 720px) {
+  .svgwrap svg { min-width: 660px; }
+  .hint { display: none; }
+}
+
+/* scene */
+.sc text { fill: var(--fg); font-family: var(--font-body); font-size: 13px; }
+.sc .tb { font-weight: 600; }
+.sc .tm { fill: var(--muted); font-size: 11.5px; }
+.sc .mono { font-family: var(--font-mono); font-size: 11.5px; }
+.sc .t-ours { fill: var(--ours); font-weight: 600; font-size: 12.5px; }
+.sc .t-third { fill: var(--third); font-weight: 600; }
+.sc .t-cust { fill: var(--cust); font-weight: 600; }
+.sc .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; transition: stroke-width .3s; }
+.sc .box.ours { fill: var(--ours-tint); stroke: var(--ours); }
+.sc .box.third { fill: var(--third-tint); stroke: var(--third); }
+.sc .box.cust { fill: var(--cust-tint); stroke: var(--cust); }
+.sc .region { fill: var(--ours-wash); stroke: var(--ours); stroke-opacity: .4; }
+.sc .frame { fill: none; stroke: var(--cust); stroke-width: 1.4; stroke-dasharray: 8 6; }
+.sc .icon { fill: var(--fg2); }
+.sc .wire { stroke: var(--muted); stroke-width: 1.3; fill: none; opacity: .55; }
+.sc .wire.dash { stroke-dasharray: 5 4; }
+.sc .ah { fill: var(--muted); }
+.sc .blk { transition: opacity .45s; }
+.sc.dim .blk { opacity: .22; }
+.sc.dim .blk.on { opacity: 1; }
+.sc.dim .blk.on .box { stroke-width: 2.4; }
+.sc .eng-v, .sc .eng-c { transition: opacity .9s, transform .9s; }
+.sc .eng-c { opacity: 0; transform: translateY(14px); }
+.sc.mode-cuda .eng-c { opacity: 1; transform: none; }
+.sc.mode-cuda .eng-v { opacity: 0; transform: translateY(14px); }
+.sc .ov { opacity: 0; transition: opacity .6s; pointer-events: none; }
+.sc .ov.show { opacity: 1; }
+.sc .slot { fill: var(--surface); stroke: var(--ours); stroke-width: 1.1; transition: fill .25s; }
+.sc .slot.c { stroke: var(--third); }
+.sc .slot.on { fill: var(--ours); }
+.sc .slot.c.on { fill: var(--third); }
+.sc .wk { fill: var(--surface); stroke: var(--ours); stroke-width: 1.1; transition: fill .25s; }
+.sc .wk.on { fill: var(--ours); }
+.sc .gpu.hot .box { animation: heat 1.1s ease-in-out infinite; }
+@keyframes heat { 0%, 100% { fill: var(--cust-tint); } 50% { fill: var(--heat); } }
+.sc .pulse { animation: pulse 1.2s ease-in-out 2; transform-box: fill-box; transform-origin: center; }
+@keyframes pulse { 50% { transform: scale(1.06); } }
+.sc .tok rect { stroke-width: 1.2; }
+.sc .tk-doc { fill: var(--surface); stroke: var(--fg2); }
+.sc .tk-page { fill: var(--surface); stroke: var(--ours); }
+.sc .tk-txt { fill: var(--ours-tint); stroke: var(--ours); }
+.sc .tk-json { fill: var(--cust-tint); stroke: var(--cust); }
+.sc .tk-xlsx { fill: var(--ok-tint); stroke: var(--ok); }
+.sc .tk-img { fill: var(--third-tint); stroke: var(--third); }
+.sc .tok line { stroke: var(--muted); stroke-width: 1.2; }
+.sc .tok text { font-family: var(--font-mono); font-size: 7.5px; font-weight: 600; fill: var(--fg); }
+.sc .tok .tx-xlsx { fill: var(--ok); }
+.sc .tok .tx-img { fill: var(--third); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sc .blk, .sc .eng-v, .sc .eng-c, .sc .ov, .sc .slot, .sc .wk { transition: none; }
+  .sc .gpu.hot .box, .sc .pulse, .term .cur { animation: none; }
+}
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">Распознавание документов · ocr_platform</p>
+  <h1>Ядро распознавания по шагам</h1>
+  <p class="lede">Анимация показывает, как документ проходит через систему, где работают движки на видеокарте и как администратор заказчика сам подключает CUDA вместо Vulkan. Нажмите «Смотреть» или листайте шаги стрелками.</p>
+  <div class="legend">
+    <span class="chip ours"><i></i>наш продукт</span>
+    <span class="chip third"><i></i>сторонние движки, ставит заказчик</span>
+    <span class="chip cust"><i></i>среда заказчика</span>
+  </div>
+</header>
+
+<div class="player">
+  <div class="stage">
+    <div class="stage-bar"><span class="ch" id="chname">Участники</span><span class="chip ours" id="modechip"><i></i>Режим: Vulkan, по умолчанию</span></div>
+    <div class="svgwrap">
+<svg class="sc" id="scene" viewBox="0 0 900 620" role="img" aria-label="Сервер заказчика: бэкенд TrackTrack, общая папка, ядро ocr_platform с обработчиком очереди, конвейером и шлюзом, движки на видеокарте и слои сервера; слева сотрудник с плагином Р7 и администратор">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  </defs>
+
+  <!-- people -->
+  <text x="14" y="34" class="tm">Офис</text>
+  <g class="blk" data-k="plugin people">
+    <rect class="box" id="plugin-box" x="10" y="44" width="140" height="100" rx="10"/>
+    <circle class="icon" cx="80" cy="68" r="9"/><path class="icon" d="M62,98 C62,82 98,82 98,98 Z"/>
+    <text x="80" y="118" text-anchor="middle" class="tb">Сотрудник</text>
+    <text x="80" y="136" text-anchor="middle" class="tm">плагин Р7</text>
+  </g>
+  <g class="blk" data-k="admin people">
+    <rect class="box cust" x="10" y="446" width="140" height="110" rx="10"/>
+    <circle class="icon" cx="80" cy="472" r="9"/><path class="icon" d="M62,502 C62,486 98,486 98,502 Z"/>
+    <text x="80" y="524" text-anchor="middle" class="tb">Администратор</text>
+    <text x="80" y="542" text-anchor="middle" class="tm">заказчика</text>
+  </g>
+
+  <!-- server frame -->
+  <rect class="frame" x="170" y="10" width="560" height="598" rx="16"/>
+  <text x="188" y="32" class="t-cust" font-size="12">Сервер заказчика</text>
+
+  <!-- wires -->
+  <g>
+    <line class="wire" x1="150" y1="88" x2="188" y2="76" marker-end="url(#ar)"/>
+    <line class="wire" x1="360" y1="75" x2="378" y2="75" marker-end="url(#ar)"/>
+    <line class="wire" x1="430" y1="106" x2="303" y2="144" marker-end="url(#ar)"/>
+    <line class="wire" x1="350" y1="181" x2="378" y2="181" marker-end="url(#ar)"/>
+    <line class="wire" x1="522" y1="216" x2="522" y2="240" marker-end="url(#ar)"/>
+    <line class="wire" x1="558" y1="242" x2="558" y2="218" marker-end="url(#ar)"/>
+    <line class="wire" x1="470" y1="314" x2="339" y2="370" marker-end="url(#ar)"/>
+    <line class="wire" x1="620" y1="314" x2="604" y2="370" marker-end="url(#ar)"/>
+    <line class="wire" x1="650" y1="146" x2="567" y2="108" marker-end="url(#ar)"/>
+    <line class="wire dash" x1="150" y1="500" x2="184" y2="500" marker-end="url(#ar)"/>
+  </g>
+
+  <!-- backend row -->
+  <g class="blk" data-k="backend">
+    <rect class="box" x="190" y="44" width="170" height="62" rx="8"/>
+    <text x="275" y="70" text-anchor="middle" class="tb">Бэкенд TrackTrack</text>
+    <text x="275" y="90" text-anchor="middle" class="tm">не меняется</text>
+  </g>
+  <g class="blk" data-k="folder">
+    <rect class="box" x="380" y="44" width="200" height="62" rx="8"/>
+    <text x="480" y="70" text-anchor="middle" class="tb">Общая папка</text>
+    <text x="480" y="90" text-anchor="middle" class="tm">задания и файлы</text>
+  </g>
+  <g class="ov" id="ov-kit"><g class="blk" data-k="kit">
+    <rect class="box third" x="600" y="44" width="114" height="62" rx="8"/>
+    <text x="657" y="70" text-anchor="middle" class="tb mono">ocr_accel_cuda</text>
+    <text x="657" y="90" text-anchor="middle" class="tm">набор CUDA</text>
+  </g></g>
+
+  <!-- core -->
+  <g class="blk" data-k="core queue pipeline gateway engv">
+    <rect class="region" x="186" y="118" width="528" height="222" rx="12"/>
+    <text x="704" y="332" text-anchor="end" class="t-ours">Ядро ocr_platform · наш продукт</text>
+  </g>
+  <g class="blk" data-k="queue core">
+    <rect class="box ours" x="200" y="146" width="150" height="70" rx="8"/>
+    <text x="275" y="170" text-anchor="middle" class="tb">Обработчик</text>
+    <text x="275" y="187" text-anchor="middle" class="tb">очереди</text>
+    <rect class="wk" id="w0" x="246" y="197" width="10" height="10" rx="2"/>
+    <rect class="wk" id="w1" x="262" y="197" width="10" height="10" rx="2"/>
+    <rect class="wk" id="w2" x="278" y="197" width="10" height="10" rx="2"/>
+    <rect class="wk" id="w3" x="294" y="197" width="10" height="10" rx="2"/>
+  </g>
+  <g class="blk" data-k="pipeline core">
+    <rect class="box ours" x="380" y="146" width="320" height="70" rx="8"/>
+    <text x="540" y="172" text-anchor="middle" class="tb">Конвейер</text>
+    <text x="540" y="194" text-anchor="middle" class="tm">страницы → текст → поля → проверка → файл</text>
+  </g>
+  <g class="blk" data-k="gateway core">
+    <rect class="box ours" id="gw-box" x="380" y="242" width="320" height="72" rx="8"/>
+    <text x="540" y="264" text-anchor="middle" class="tb">Шлюз движков</text>
+    <text x="540" y="282" text-anchor="middle" class="tm">очередь · журнал · перевод запросов</text>
+    <text x="540" y="301" text-anchor="middle" class="tm mono" id="gw-addr">адреса: ocr-model, text-llm</text>
+  </g>
+  <g class="ov" id="ov-wait"><text x="275" y="314" text-anchor="middle" class="tm">ждут свободного места</text></g>
+  <g class="ov" id="ov-log"><g class="blk" data-k="log">
+    <rect class="box" id="log-box" x="592" y="346" width="122" height="22" rx="6"/>
+    <text x="653" y="361" text-anchor="middle" class="tm">журнал согласия</text>
+  </g></g>
+
+  <!-- engines -->
+  <g class="blk" data-k="engines engv engc ocr llm gpu"><text x="200" y="362" class="tb" font-size="12.5">Движки на видеокарте</text></g>
+  <g class="eng-v">
+    <g class="blk" data-k="engines engv ocr core">
+      <rect class="box ours" x="200" y="372" width="270" height="84" rx="8"/>
+      <text x="335" y="394" text-anchor="middle" class="tb mono">ocr-model</text>
+      <text x="335" y="411" text-anchor="middle" class="tm">llama.cpp · Vulkan · dots.ocr</text>
+      <g id="slots-ov"></g>
+    </g>
+    <g class="blk" data-k="engines engv llm core">
+      <rect class="box ours" x="490" y="372" width="224" height="84" rx="8"/>
+      <text x="602" y="394" text-anchor="middle" class="tb mono">text-llm</text>
+      <text x="602" y="411" text-anchor="middle" class="tm">llama.cpp · Vulkan · GigaChat</text>
+      <g id="slots-lv"></g>
+    </g>
+  </g>
+  <g class="eng-c">
+    <g class="blk" data-k="engines engc ocr">
+      <rect class="box third" x="200" y="372" width="270" height="84" rx="8"/>
+      <text x="335" y="394" text-anchor="middle" class="tb mono">cuda-ocr</text>
+      <text x="335" y="411" text-anchor="middle" class="tm">vLLM · CUDA · dots.ocr</text>
+      <g id="slots-oc"></g>
+    </g>
+    <g class="blk" data-k="engines engc llm">
+      <rect class="box third" x="490" y="372" width="224" height="84" rx="8"/>
+      <text x="602" y="394" text-anchor="middle" class="tb mono">cuda-llm</text>
+      <text x="602" y="411" text-anchor="middle" class="tm">llama.cpp · CUDA · GigaChat</text>
+      <g id="slots-lc"></g>
+    </g>
+  </g>
+
+  <!-- server layers -->
+  <g class="blk" data-k="layers">
+    <rect class="box cust" x="186" y="470" width="528" height="26" rx="6"/>
+    <text x="450" y="488" text-anchor="middle" id="lbl-docker">Docker</text>
+  </g>
+  <g class="blk" data-k="layers driver">
+    <rect class="box cust" x="186" y="502" width="528" height="26" rx="6"/>
+    <text x="450" y="520" text-anchor="middle" id="lbl-driver">Драйвер видеокарты: открытый Mesa или NVIDIA</text>
+  </g>
+  <g class="blk" data-k="layers">
+    <rect class="box cust" x="186" y="534" width="528" height="26" rx="6"/>
+    <text x="450" y="552" text-anchor="middle">ОС Linux: Astra или другая</text>
+  </g>
+  <g class="blk gpu" id="gpu" data-k="layers gpu">
+    <rect class="box cust" x="186" y="566" width="528" height="30" rx="6"/>
+    <text x="450" y="586" text-anchor="middle" class="tb" id="lbl-gpu">Видеокарта: AMD, Intel или NVIDIA</text>
+  </g>
+
+  <!-- internet -->
+  <g class="ov" id="ov-net"><g class="blk" data-k="net">
+    <rect class="box third" x="748" y="40" width="144" height="122" rx="14" stroke-dasharray="6 4"/>
+    <text x="820" y="64" text-anchor="middle" class="tb">Интернет</text>
+    <text x="820" y="86" text-anchor="middle" class="tm">Docker Hub · vLLM</text>
+    <text x="820" y="104" text-anchor="middle" class="tm">GHCR · llama.cpp</text>
+    <text x="820" y="122" text-anchor="middle" class="tm">Hugging Face · веса</text>
+    <text x="820" y="146" text-anchor="middle" class="tm">у правообладателей</text>
+    <polyline class="wire dash" points="790,162 790,184 722,184 722,412 716,412" marker-end="url(#ar)"/>
+  </g></g>
+
+  <!-- responsibility braces -->
+  <g class="ov" id="ov-resp">
+    <path class="wire" d="M736,120 h7 v218 h-7" style="opacity:1;stroke:var(--ours)"/>
+    <text x="752" y="222" class="t-ours" font-size="13">Наш продукт</text>
+    <text x="752" y="240" class="tm">в реестре</text>
+    <path class="wire" d="M736,374 h7 v80 h-7" style="opacity:1;stroke:var(--third)"/>
+    <text x="752" y="406" class="t-ours" font-size="12">Vulkan: наши</text>
+    <text x="752" y="424" class="t-third" font-size="12">CUDA: заказчика</text>
+    <path class="wire" d="M736,472 h7 v122 h-7" style="opacity:1;stroke:var(--cust)"/>
+    <text x="752" y="528" class="t-cust" font-size="13">Среда</text>
+    <text x="752" y="546" class="t-cust" font-size="13">заказчика</text>
+  </g>
+
+  <!-- what goes where -->
+  <g class="ov" id="ov-reg">
+    <rect class="box ours" x="748" y="176" width="144" height="104" rx="10"/>
+    <text x="820" y="200" text-anchor="middle" class="tb">Дистрибутив</text>
+    <text x="820" y="218" text-anchor="middle" class="tm">идёт в реестр</text>
+    <text x="820" y="238" text-anchor="middle" class="tm">ядро + движки Vulkan</text>
+    <text x="820" y="264" text-anchor="middle" class="t-ours mono" font-size="11">✓ registry_guard</text>
+    <rect class="box third" x="748" y="300" width="144" height="104" rx="10"/>
+    <text x="820" y="324" text-anchor="middle" class="tb">Набор CUDA</text>
+    <text x="820" y="342" text-anchor="middle" class="tm">не в дистрибутиве</text>
+    <text x="820" y="360" text-anchor="middle" class="tm">передаём как текст</text>
+    <text x="820" y="380" text-anchor="middle" class="tm">образы — у заказчика</text>
+    <line class="wire dash" x1="714" y1="228" x2="746" y2="228" style="opacity:1;stroke:var(--ours)"/>
+    <polyline class="wire dash" points="714,75 734,75 734,352 746,352" style="opacity:1;stroke:var(--third)"/>
+  </g>
+
+  <g id="tokens"></g>
+</svg>
+    </div>
+  </div>
+
+  <aside class="panel" aria-live="polite">
+    <p class="counter" id="counter">Шаг 1 из 24</p>
+    <h2 id="title">Общая картина</h2>
+    <p class="text" id="text"></p>
+    <pre class="code" id="code" hidden></pre>
+    <pre class="term" id="term" hidden></pre>
+    <p class="term-note" id="termnote" hidden></p>
+    <ul id="details"></ul>
+  </aside>
+
+  <div class="controls">
+    <div class="btns">
+      <button class="btn" id="prev" type="button" aria-label="Предыдущий шаг"><svg viewBox="0 0 16 16"><path d="M10.5 2 4 8l6.5 6 1.2-1.3L6.6 8l5.1-4.7z"/></svg>Назад</button>
+      <button class="btn primary" id="play" type="button"><svg viewBox="0 0 16 16" id="playicon"><path d="M4 2.5v11l9-5.5z"/></svg><span id="playlabel">Смотреть</span></button>
+      <button class="btn" id="next" type="button" aria-label="Следующий шаг">Далее<svg viewBox="0 0 16 16"><path d="M5.5 2 12 8l-6.5 6-1.2-1.3L9.4 8 4.3 3.3z"/></svg></button>
+      <button class="btn" id="replay" type="button">Повторить шаг</button>
+      <span class="hint">Клавиши: ← → и пробел</span>
+    </div>
+    <div class="chapters" id="chapters"></div>
+    <div class="segs" id="segs"></div>
+  </div>
+
+<script>
+(function () {
+  var NS = 'http://www.w3.org/2000/svg';
+  var scene = document.getElementById('scene');
+  var tokens = document.getElementById('tokens');
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var K = reduce ? 0 : 1;
+  var run = 0, cur = 0, playing = false, timer = null;
+
+  // ---------- slots ----------
+  function mkSlots(gid, n, x0, y0, size, gap, perRow, cls) {
+    var g = document.getElementById(gid), out = [];
+    for (var i = 0; i < n; i++) {
+      var r = document.createElementNS(NS, 'rect');
+      var col = i % perRow, row = Math.floor(i / perRow);
+      r.setAttribute('x', x0 + col * (size + gap)); r.setAttribute('y', y0 + row * (size + gap));
+      r.setAttribute('width', size); r.setAttribute('height', size); r.setAttribute('rx', 2);
+      r.setAttribute('class', 'slot' + (cls ? ' ' + cls : ''));
+      g.appendChild(r);
+      out.push({ el: r, cx: x0 + col * (size + gap) + size / 2, cy: y0 + row * (size + gap) + size / 2 });
+    }
+    return out;
+  }
+  var SL = {
+    ov: mkSlots('slots-ov', 8, 270, 424, 12, 5, 8),
+    lv: mkSlots('slots-lv', 4, 571, 424, 12, 5, 4),
+    oc: mkSlots('slots-oc', 32, 233, 420, 9, 4, 16, 'c'),
+    lc: mkSlots('slots-lc', 4, 571, 424, 12, 5, 4, 'c')
+  };
+  function slotsOff() { Object.keys(SL).forEach(function (k) { SL[k].forEach(function (s) { s.el.classList.remove('on'); }); }); }
+  function wk(n) { for (var i = 0; i < 4; i++) document.getElementById('w' + i).classList.toggle('on', i < n); }
+  function gpu(on) { document.getElementById('gpu').classList.toggle('hot', !!on && K > 0); }
+
+  // ---------- tokens ----------
+  var TK = {
+    pdf: '<rect x="-11" y="-14" width="22" height="28" rx="3" class="tk-doc"/><text y="3" text-anchor="middle">PDF</text>',
+    page: '<rect x="-8" y="-10" width="16" height="20" rx="2" class="tk-page"/><line x1="-4" y1="-4" x2="4" y2="-4"/><line x1="-4" y1="0" x2="4" y2="0"/><line x1="-4" y1="4" x2="2" y2="4"/>',
+    txt: '<rect x="-8" y="-10" width="16" height="20" rx="2" class="tk-txt"/><text y="3" text-anchor="middle">Аб</text>',
+    task: '<rect x="-13" y="-10" width="26" height="20" rx="4" class="tk-json"/><text y="3" text-anchor="middle">{ }</text>',
+    json: '<rect x="-13" y="-10" width="26" height="20" rx="4" class="tk-txt"/><text y="3" text-anchor="middle">{ }</text>',
+    xlsx: '<rect x="-13" y="-15" width="26" height="30" rx="3" class="tk-xlsx"/><text y="3" text-anchor="middle" class="tx-xlsx">XLSX</text>',
+    img: '<rect x="-17" y="-12" width="34" height="24" rx="4" class="tk-img"/><text y="3" text-anchor="middle" class="tx-img">образ</text>',
+    w: '<rect x="-15" y="-11" width="30" height="22" rx="4" class="tk-img"/><text y="3" text-anchor="middle" class="tx-img">веса</text>'
+  };
+  function tok(kind, x, y) {
+    var g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'tok');
+    g.innerHTML = TK[kind];
+    place(g, x, y, 1);
+    tokens.appendChild(g);
+    return g;
+  }
+  function place(g, x, y, s) {
+    g._x = x; g._y = y; g._s = s == null ? (g._s == null ? 1 : g._s) : s;
+    g.setAttribute('transform', 'translate(' + x.toFixed(1) + ',' + y.toFixed(1) + ') scale(' + g._s.toFixed(3) + ')');
+  }
+  function ease(p) { return p < .5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2; }
+  function tween(ms, fn, my) {
+    return new Promise(function (res) {
+      if (my !== run) return res(false);
+      var d = ms * K;
+      if (!d) { fn(1); return res(true); }
+      var t0 = performance.now();
+      function f(now) {
+        if (my !== run) return res(false);
+        var p = Math.min(1, (now - t0) / d);
+        fn(ease(p));
+        if (p < 1) requestAnimationFrame(f); else res(true);
+      }
+      requestAnimationFrame(f);
+    });
+  }
+  function wait(ms, my) { return tween(ms, function () {}, my); }
+  function move(g, x, y, ms, my) {
+    var x0 = g._x, y0 = g._y;
+    return tween(ms, function (p) { place(g, x0 + (x - x0) * p, y0 + (y - y0) * p); }, my);
+  }
+  async function path(g, pts, ms, my) {
+    for (var i = 0; i < pts.length; i++) { if (!(await move(g, pts[i][0], pts[i][1], ms, my))) return false; }
+    return true;
+  }
+  function grow(g, my) { return tween(450, function (p) { place(g, g._x, g._y, .2 + .8 * p); }, my); }
+  function pulse(id) { var el = document.getElementById(id); if (!el || !K) return; el.classList.remove('pulse'); void el.getBBox(); el.classList.add('pulse'); }
+
+  // positions
+  var P = {
+    plugin: [128, 66], backend: [275, 75], folder: [480, 75], folderR: [556, 75],
+    queue: [275, 181], pipeIn: [430, 181], pipe: [540, 181], pipeR: [650, 160],
+    gw: [540, 278], ocr: [335, 414], llm: [602, 414], netOut: [790, 150]
+  };
+  function waitPos(i) { return [215 + (i % 6) * 24, 262 + Math.floor(i / 6) * 26]; }
+
+  // ---------- mode & layers ----------
+  function setMode(m) {
+    scene.classList.toggle('mode-cuda', m === 'cuda');
+    document.getElementById('gw-addr').textContent = m === 'cuda' ? 'адреса: cuda-ocr, cuda-llm' : 'адреса: ocr-model, text-llm';
+    var chip = document.getElementById('modechip');
+    chip.className = 'chip ' + (m === 'cuda' ? 'third' : 'ours');
+    chip.innerHTML = '<i></i>' + (m === 'cuda' ? 'Режим: CUDA, набор заказчика' : 'Режим: Vulkan, по умолчанию');
+  }
+  function setNv(nv) {
+    document.getElementById('lbl-docker').textContent = nv ? 'Docker + NVIDIA Container Toolkit' : 'Docker';
+    document.getElementById('lbl-driver').textContent = nv ? 'Драйвер NVIDIA: в нём есть части Vulkan и CUDA' : 'Драйвер видеокарты: открытый Mesa или NVIDIA';
+    document.getElementById('lbl-gpu').textContent = nv ? 'Видеокарта NVIDIA' : 'Видеокарта: AMD, Intel или NVIDIA';
+  }
+  var OV = ['ov-kit', 'ov-log', 'ov-net', 'ov-wait', 'ov-resp', 'ov-reg'];
+  var blks = Array.prototype.slice.call(scene.querySelectorAll('.blk'));
+  function setFocus(f) {
+    if (f === 'all') { scene.classList.remove('dim'); blks.forEach(function (b) { b.classList.remove('on'); }); return; }
+    scene.classList.add('dim');
+    blks.forEach(function (b) {
+      var keys = (b.getAttribute('data-k') || '').split(' ');
+      b.classList.toggle('on', keys.some(function (k) { return f.indexOf(k) !== -1; }));
+    });
+  }
+
+  // ---------- steps ----------
+  var CH = ['Участники', 'Путь документа', 'Много пользователей', 'Включение CUDA', 'Ответственность и реестр'];
+  var steps = [
+    { ch: 0, title: 'Общая картина', focus: 'all',
+      text: 'Это сервер заказчика с нашим продуктом. Сверху бэкенд TrackTrack, в середине наше ядро, ниже движки моделей и слои самого сервера. Слева люди, которые с этим работают.',
+      details: ['Синий — наш продукт, он подаётся в реестр', 'Охра — среда заказчика: железо, ОС, драйвер, Docker', 'Малиновый — сторонние движки CUDA, они появятся в главе 4'] },
+    { ch: 0, title: 'Сотрудник с плагином Р7', focus: ['plugin'],
+      text: 'Бухгалтер, юрист или оператор работает в Р7-Офис и нажимает «Распознать». Он не выбирает, на чём работают модели, и не знает об этом.',
+      details: ['Получает docx, xlsx или XML', 'Разницу между режимами видит только в скорости', 'За выбор движков не отвечает'] },
+    { ch: 0, title: 'Администратор заказчика', focus: ['admin', 'layers'],
+      text: 'Он ставит на сервер ОС, драйвер видеокарты, Docker и наш дистрибутив, а потом запускает продукт. Когда мы говорим «ответственность на конечном пользователе», речь о нём и об организации, от имени которой он работает.',
+      details: ['Запускает продукт командой <code>./ocrctl up</code>', 'Решает, подключать ли набор CUDA', 'В договоре это Лицензиат, организация-пользователь'] },
+    { ch: 0, title: 'Наш продукт — ядро', focus: ['core', 'engv'],
+      text: 'Ядро — то, что мы поставляем и подаём в реестр: обработчик очереди, конвейер, шлюз движков и сами движки на Vulkan. Образы собраны на Astra Linux, CUDA внутри нет.',
+      details: ['Контейнеры queue, engine-gateway, ocr-model, text-llm', 'Модели dots.ocr и GigaChat3.1 уже внутри образов', 'Сеть контейнеров без выхода в интернет'] },
+
+    { ch: 1, title: 'Сотрудник нажал «Распознать»', focus: ['plugin', 'backend'],
+      text: 'Плагин отправляет PDF или скан бэкенду TrackTrack вместе с нужным форматом результата.',
+      details: ['docx — текст и таблицы документа', 'xlsx или XML — поля счёта-фактуры, УПД и других поддерживаемых типов'],
+      anim: async function (my) { var d = tok('pdf', P.plugin[0], P.plugin[1]); await grow(d, my); await move(d, P.backend[0], P.backend[1], 1100, my); } },
+    { ch: 1, title: 'Задание в общей папке', focus: ['backend', 'folder'],
+      text: 'Бэкенд кладёт файл в папку input, а в папку queue — короткое задание: номер, формат входа и выхода, тип распознавания. Бэкенд работает так же, как раньше.',
+      code: '{"id": 1, "input_file_extension": "pdf",\n "output_file_extension": "xlsx",\n "recognition_type": "xlsx_invoice"}',
+      details: ['Обмен идёт через общую папку на сервере', 'В бэкенде ничего не переделывали'],
+      anim: async function (my) { var d = tok('pdf', P.backend[0], P.backend[1]); var j = tok('task', P.backend[0], P.backend[1]); await Promise.all([move(d, 462, 75, 1000, my), move(j, 500, 75, 1000, my)]); } },
+    { ch: 1, title: 'Обработчик очереди берёт задание', focus: ['folder', 'queue'],
+      text: 'Наш контейнер queue следит за папкой. Он забирает задание, ставит статус «processing» и запускает для него конвейер. Одновременно идут до четырёх заданий.',
+      details: ['Взятое задание откладывается в отдельную папку', 'После перезапуска незаконченные задания вернутся в очередь', 'Прогресс 5 %'],
+      anim: async function (my) { var d = tok('pdf', 462, 75), j = tok('task', 500, 75); await Promise.all([move(d, 262, 172, 1100, my), move(j, 290, 172, 1100, my)]); wk(1); j.remove(); } },
+    { ch: 1, title: 'Конвейер готовит страницы', focus: ['queue', 'pipeline'],
+      text: 'PDF превращается в картинки страниц. Классификатор определяет тип документа. Если тип не поддерживается или страниц слишком много, задание сразу получает отказ.',
+      details: ['Для xlsx — до 6 страниц', 'Текст отказа: «Тип документа не поддерживается»'],
+      anim: async function (my) {
+        wk(1); var d = tok('pdf', 262, 172);
+        if (!(await move(d, P.pipeIn[0], P.pipeIn[1], 900, my))) return;
+        d.remove();
+        var pg = [0, 1, 2].map(function () { return tok('page', P.pipeIn[0], P.pipeIn[1]); });
+        await Promise.all(pg.map(function (p, i) { return move(p, 610 + i * 26, 181, 700, my); }));
+      } },
+    { ch: 1, title: 'Шлюз движков', focus: ['pipeline', 'gateway'], show: ['ov-wait'],
+      text: 'Конвейер не обращается к движкам напрямую, все запросы идут через шлюз. Шлюз держит очередь и отдаёт движку не больше запросов, чем у того свободных мест.',
+      details: ['Если движок упал, шлюз ждёт его или идёт к другому', 'Каждый запрос пишется в журнал: ожидание, время, токены', 'Шлюз переводит запрос на «язык» конкретного движка'],
+      anim: async function (my) {
+        wk(1);
+        var pg = [0, 1, 2].map(function (i) { return tok('page', 610 + i * 26, 181); });
+        await Promise.all(pg.map(async function (p, i) {
+          if (!(await wait(i * 220, my))) return;
+          if (!(await move(p, P.gw[0], P.gw[1], 700, my))) return;
+          await move(p, waitPos(i)[0], waitPos(i)[1], 700, my);
+        }));
+      } },
+    { ch: 1, title: 'Распознавание на видеокарте', focus: ['gateway', 'ocr', 'gpu'],
+      text: 'Движок ocr-model читает картинки страниц моделью dots.ocr и возвращает текст и таблицы. Это llama.cpp, собранный только с Vulkan, — открытым стандартом для любых видеокарт.',
+      details: ['2 процесса по 4 места: до 8 страниц сразу', 'Страница уходит в движок по HTTP, ответ — текст с разметкой таблиц', 'Прогресс растёт по готовым страницам'],
+      anim: async function (my) {
+        wk(1);
+        var pg = [0, 1, 2].map(function (i) { return tok('page', waitPos(i)[0], waitPos(i)[1]); });
+        var ok = await Promise.all(pg.map(async function (p, i) {
+          if (!(await wait(i * 180, my))) return false;
+          if (!(await move(p, P.gw[0], P.gw[1], 600, my))) return false;
+          if (!(await move(p, SL.ov[i].cx, SL.ov[i].cy, 600, my))) return false;
+          p.remove(); SL.ov[i].el.classList.add('on'); return true;
+        }));
+        if (ok.indexOf(false) !== -1) return;
+        gpu(true);
+        if (!(await wait(1400, my))) return;
+        slotsOff(); gpu(false);
+        var tx = [0, 1, 2].map(function (i) { return tok('txt', SL.ov[i].cx, SL.ov[i].cy); });
+        await Promise.all(tx.map(function (t, i) { return path(t, [P.gw, [610 + i * 26, 181]], 650, my); }));
+      } },
+    { ch: 1, title: 'LLM разбирает поля', focus: ['pipeline', 'gateway', 'llm', 'gpu'],
+      text: 'Для xlsx и XML распознанный текст уходит в движок text-llm с моделью GigaChat3.1. Грамматика заставляет модель отвечать строго JSON с нужными полями: продавец, ИНН, строки, суммы.',
+      details: ['Для docx этот шаг не нужен', 'В LLM 4 места', 'Прогресс 85 %'],
+      anim: async function (my) {
+        wk(1);
+        var tx = [0, 1, 2].map(function (i) { return tok('txt', 610 + i * 26, 181); });
+        var ok = await Promise.all(tx.map(function (t) { return path(t, [P.gw, [SL.lv[0].cx, SL.lv[0].cy]], 700, my); }));
+        if (ok.indexOf(false) !== -1) return;
+        tx.forEach(function (t) { t.remove(); });
+        SL.lv[0].el.classList.add('on'); gpu(true);
+        if (!(await wait(1400, my))) return;
+        slotsOff(); gpu(false);
+        var j = tok('json', SL.lv[0].cx, SL.lv[0].cy);
+        await path(j, [P.gw, [640, 181]], 700, my);
+      } },
+    { ch: 1, title: 'Проверка и сборка файла', focus: ['pipeline'],
+      text: 'Валидатор сверяет числа: количество на цену, итоги по строкам, НДС. Ошибку в разряде он может исправить сам. Потом собирается файл нужного формата.',
+      details: ['xlsx открывается в Р7-Офис, МойОфис и LibreOffice', 'docx собирается из распознанного текста и таблиц'],
+      anim: async function (my) {
+        wk(1);
+        var j = tok('json', 640, 181);
+        if (!(await move(j, P.pipe[0], P.pipe[1], 800, my))) return;
+        j.remove();
+        var x = tok('xlsx', P.pipe[0], P.pipe[1]); place(x, x._x, x._y, .2);
+        await grow(x, my);
+      } },
+    { ch: 1, title: 'Результат у сотрудника', focus: ['pipeline', 'folder', 'backend', 'plugin'],
+      text: 'Обработчик кладёт файл в папку output и пишет статус «completed». Бэкенд видит статус и отдаёт результат в плагин.',
+      code: '{"status": "completed", "progress": 100}',
+      details: ['Сотрудник получает файл в Р7-Офис', 'Весь путь занимает от десятков секунд до нескольких минут, в зависимости от числа страниц и нагрузки'],
+      anim: async function (my) {
+        var x = tok('xlsx', P.pipe[0], P.pipe[1]);
+        if (await path(x, [P.pipeR, P.folderR, P.backend, P.plugin], 750, my)) { wk(0); pulse('plugin-box'); }
+      } },
+
+    { ch: 2, title: 'Много документов сразу', focus: ['folder', 'queue', 'gateway', 'ocr', 'gpu'], show: ['ov-wait'],
+      text: 'Обработчик берёт до четырёх заданий параллельно, остальные ждут в папке. Шлюз выстраивает страницы всех заданий в общую очередь: восемь в работе, остальные ждут свободного места в движке.',
+      details: ['Движок не перегружается, растёт только ожидание', 'На одной карте распознавание и LLM делят память и время', 'При многих xlsx LLM не успевает: нужна вторая карта под LLM или режим CUDA'],
+      anim: async function (my) {
+        var docs = [];
+        for (var i = 0; i < 6; i++) docs.push(tok('pdf', P.plugin[0], P.plugin[1]));
+        var ok = await Promise.all(docs.map(async function (d, i) {
+          if (!(await wait(i * 160, my))) return false;
+          if (!(await path(d, [P.backend, [430 + i * 22, 75]], 600, my))) return false;
+          return true;
+        }));
+        if (ok.indexOf(false) !== -1) return;
+        ok = await Promise.all(docs.slice(0, 4).map(async function (d, i) {
+          if (!(await wait(i * 140, my))) return false;
+          if (!(await move(d, 238 + i * 24, 172, 800, my))) return false;
+          wk(i + 1); return true;
+        }));
+        if (ok.indexOf(false) !== -1) return;
+        docs.slice(0, 4).forEach(function (d) { d.remove(); });
+        var pg = [];
+        for (var k = 0; k < 14; k++) pg.push(tok('page', P.pipeIn[0] + (k % 7) * 30, 181));
+        gpu(true);
+        await Promise.all(pg.map(async function (p, k) {
+          if (!(await wait(k * 110, my))) return;
+          if (!(await move(p, P.gw[0], P.gw[1], 550, my))) return;
+          if (k < 8) { if (await move(p, SL.ov[k].cx, SL.ov[k].cy, 550, my)) { p.remove(); SL.ov[k].el.classList.add('on'); } }
+          else { await move(p, waitPos(k - 8)[0], waitPos(k - 8)[1], 550, my); }
+        }));
+      } },
+
+    { ch: 3, title: 'Подготовка сервера для CUDA', focus: ['admin', 'layers'], nv: true,
+      text: 'Нужна карта NVIDIA, драйвер NVIDIA 580 или новее и NVIDIA Container Toolkit, подключённый к Docker. Всё это среда заказчика, её ставит администратор.',
+      term: [{ c: 'sudo nvidia-ctk runtime configure --runtime=docker' }, { c: 'sudo systemctl restart docker' }],
+      details: ['Драйвер NVIDIA содержит части для Vulkan и для CUDA', 'Toolkit даёт контейнерам доступ к карте', 'Наш продукт пока работает как обычно, на Vulkan'] },
+    { ch: 3, title: 'Набор CUDA и проверка сервера', focus: ['admin', 'kit', 'net'], nv: true, show: ['ov-kit', 'ov-net'],
+      text: 'Администратор кладёт рядом с ядром папку ocr_accel_cuda — настройки от нас, без программ внутри. Затем скачивает веса dots.ocr для vLLM и проверяет сервер.',
+      term: [{ c: 'cd ~/ocr_accel_cuda' }, { c: 'bash fetch_weights.sh' }, { c: 'bash preflight.sh' },
+             { o: '  ok    драйвер поддерживает CUDA до 13.0' }, { o: '  ok    NVIDIA Container Toolkit подключён (runtime nvidia)' },
+             { o: '  ok    карта видна в контейнере: NVIDIA L4' }, { o: '  ok    диск: свободно 47 ГБ' }, { o: 'итог: готово' }],
+      note: 'Вывод проверки взят из эксперимента и сокращён.',
+      details: ['В наборе нет ни образов, ни библиотек NVIDIA', 'Веса (около 5.7 ГБ) берутся с Hugging Face или из зеркала заказчика'],
+      anim: async function (my) { var w = tok('w', P.netOut[0], P.netOut[1]); await path(w, [[790, 184], [722, 184], [722, 120], [690, 92]], 500, my); } },
+    { ch: 3, title: 'Команда и уведомление', focus: ['admin'], nv: true, show: ['ov-kit'],
+      text: 'Набор включает отдельная команда. Она показывает, какие сторонние компоненты подключаются, и ждёт ответа. Без yes ничего не включится.',
+      term: [{ c: 'cd ~/ocr_platform' }, { c: './ocrctl up --accel ~/ocr_accel_cuda' },
+             { o: '  Подключаются сторонние компоненты, не входящие в состав ПО ocr_platform' },
+             { o: '  и не включённые в реестр российского ПО:' },
+             { o: '      NVIDIA CUDA 12.8/13.0 (библиотеки в образах, лицензия NVIDIA),' },
+             { o: '      vLLM 0.29 (Apache-2.0) с PyTorch (BSD), llama.cpp CUDA-сборка (MIT)' },
+             { o: '  Их установка и использование — по лицензиям правообладателей и под' },
+             { o: '  ответственность организации-пользователя.' },
+             { a: '  Продолжить? Введите yes: ', v: 'yes' }],
+      details: ['Обычный <code>./ocrctl up</code> этот вопрос не задаёт и всегда даёт Vulkan', 'Без терминала согласие передаётся явно: ACCEPT_THIRD_PARTY=yes'] },
+    { ch: 3, title: 'Согласие в журнале', focus: ['admin', 'log'], nv: true, show: ['ov-kit', 'ov-log'],
+      text: 'Ответ записывается в журнал на сервере заказчика: время, пользователь, сервер, папка и версия набора, образы, которые будут запущены.',
+      term: [{ c: 'cat var/accel_acceptance.log' },
+             { o: '2026-10-09T06:46:32+0000  root  kira  /root/ocr_accel_cuda  731a2ae' },
+             { o: '  vllm/vllm-openai:v0.29.0  ghcr.io/ggml-org/llama.cpp:server-cuda-b10630' }],
+      note: 'Строка из журнала эксперимента на L4.',
+      details: ['Журнал показывает, что решение принял заказчик', 'Достаточно ли его юридически — вопрос юристам'],
+      anim: async function () { pulse('log-box'); } },
+    { ch: 3, title: 'Образы скачиваются у правообладателей', focus: ['net', 'engines', 'kit'], nv: true, show: ['ov-kit', 'ov-log', 'ov-net'],
+      text: 'Docker на сервере заказчика сам скачивает образ vLLM с Docker Hub и образ llama.cpp CUDA с GHCR. Через нас эти программы не проходят: мы их не храним и не раздаём.',
+      details: ['vLLM — около 21.5 ГБ, llama.cpp CUDA — около 4.3 ГБ', 'Библиотеки CUDA лежат внутри этих образов, по лицензии NVIDIA', 'Можно скачивать из зеркала заказчика'],
+      anim: async function (my) {
+        var a = tok('img', P.netOut[0], P.netOut[1]), b = tok('img', P.netOut[0], P.netOut[1]);
+        await Promise.all([
+          path(a, [[790, 184], [722, 184], [722, 400], [P.ocr[0] + 90, 398]], 600, my),
+          (async function () { if (!(await wait(450, my))) return; await path(b, [[790, 184], [722, 184], [722, 400], [P.llm[0] + 60, 398]], 600, my); })()
+        ]);
+      } },
+    { ch: 3, title: 'Меняются только движки', focus: ['engines', 'gateway'], nv: true, show: ['ov-kit', 'ov-log'],
+      text: 'Наши движки Vulkan останавливаются, вместо них запускаются cuda-ocr (vLLM) и cuda-llm (llama.cpp CUDA). Конвейер и шлюз те же: шлюз получает новые адреса и сам переводит запросы для vLLM.',
+      details: ['Модели те же: dots.ocr и GigaChat3.1', 'LLM работает даже с тем же файлом модели', 'Запуск занимает 2–3 минуты'],
+      anim: async function (my) { if (!(await wait(700, my))) return; setMode('cuda'); if (!(await wait(900, my))) return; pulse('gw-box'); } },
+    { ch: 3, title: 'Много страниц за один проход', mode: 'cuda', focus: ['gateway', 'ocr', 'gpu', 'pipeline'], nv: true, show: ['ov-kit', 'ov-log'],
+      text: 'vLLM склеивает запросы в пакеты и считает их за один проход карты. Поэтому при многих пользователях выигрыш самый большой. Ответы возвращаются в конвейер так же, как раньше.',
+      details: ['До 32 запросов распознавания одновременно вместо 8', 'Бэкенд и плагин ничего не заметили, кроме скорости', 'Перед работой — проверка качества на документах заказчика'],
+      anim: async function (my) {
+        wk(4);
+        var pg = [];
+        for (var k = 0; k < 24; k++) pg.push(tok('page', P.pipeIn[0] + (k % 8) * 30, 181));
+        var ok = await Promise.all(pg.map(async function (p, k) {
+          if (!(await wait(k * 50, my))) return false;
+          if (!(await move(p, P.gw[0], P.gw[1], 500, my))) return false;
+          if (!(await move(p, SL.oc[k].cx, SL.oc[k].cy, 500, my))) return false;
+          p.remove(); SL.oc[k].el.classList.add('on'); return true;
+        }));
+        if (ok.indexOf(false) !== -1) return;
+        gpu(true);
+        if (!(await wait(1300, my))) return;
+        slotsOff(); gpu(false);
+        var tx = [0, 1, 2, 3, 4, 5].map(function (i) { return tok('txt', SL.oc[i * 4].cx, SL.oc[i * 4].cy); });
+        await Promise.all(tx.map(function (t, i) { return path(t, [P.gw, [440 + i * 30, 181]], 600, my); }));
+      } },
+    { ch: 3, title: 'Вернуться на Vulkan', mode: 'cuda', focus: ['admin', 'engines'], nv: true, show: ['ov-kit', 'ov-log'],
+      text: 'Обычная команда запуска снова поднимает наши движки. Папку набора можно оставить: без --accel она не используется.',
+      term: [{ c: './ocrctl up' }, { o: 'режим: vulkan; видеокарта хоста: nvidia; профили: vulkan' }],
+      details: ['Переключать лучше в нерабочее время: движки перезапускаются', 'Незаконченные задания вернутся в очередь и доделаются'],
+      anim: async function (my) { if (!(await wait(900, my))) return; setMode('vulkan'); } },
+
+    { ch: 4, title: 'Кто за какой слой отвечает', focus: 'all', nv: true, show: ['ov-kit', 'ov-log', 'ov-resp'],
+      text: 'Железо, ОС, драйвер и Docker всегда ставит заказчик. Ядро — наше. Слой движков в режиме Vulkan тоже наш, а в режиме CUDA он сторонний: его выбирает и ставит заказчик.',
+      details: ['Драйвер NVIDIA ставит заказчик даже в режиме Vulkan', 'Наши движки берут из драйвера только часть Vulkan', 'Библиотеки CUDA лежат в образах, которые скачал заказчик'] },
+    { ch: 4, title: 'Что уходит в реестр', focus: ['core', 'engv', 'kit'], nv: true, show: ['ov-kit', 'ov-reg'],
+      text: 'В дистрибутив и в реестр идёт только ядро с движками Vulkan. Набор CUDA живёт в отдельном репозитории и передаётся как документация. Автоматические проверки следят, чтобы в образах ядра не было CUDA.',
+      details: ['selftest проверяет исходники, registry_guard — собранные образы', 'В заявке: «поддерживает подключение внешних серверов моделей», без слова CUDA'] }
+  ];
+
+  // ---------- panel ----------
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function renderPanel(st, i) {
+    $('counter').textContent = 'Шаг ' + (i + 1) + ' из ' + steps.length + ' · ' + CH[st.ch];
+    $('title').textContent = st.title;
+    $('text').textContent = st.text;
+    $('code').hidden = !st.code; if (st.code) $('code').textContent = st.code;
+    $('term').hidden = !st.term; $('term').innerHTML = '';
+    $('termnote').hidden = !st.note; if (st.note) $('termnote').textContent = st.note;
+    $('details').innerHTML = (st.details || []).map(function (d) { return '<li>' + d + '</li>'; }).join('');
+    $('chname').textContent = CH[st.ch];
+  }
+  async function typeTerm(st, my) {
+    if (!st.term) return true;
+    var el = $('term'), html = '';
+    function show(extra) { el.innerHTML = html + (extra || '') + '<span class="cur"> </span>'; }
+    for (var i = 0; i < st.term.length; i++) {
+      var ln = st.term[i];
+      if (ln.c != null) {
+        var pre = '<span class="p">$ </span>', s = ln.c;
+        for (var n = 0; n <= s.length; n++) {
+          show(pre + esc(s.slice(0, n)));
+          if (!(await wait(22, my))) { fill(st); return false; }
+        }
+        html += pre + esc(s) + '\n';
+        if (!(await wait(260, my))) { fill(st); return false; }
+      } else if (ln.o != null) {
+        html += '<span class="o">' + esc(ln.o) + '</span>\n'; show();
+        if (!(await wait(140, my))) { fill(st); return false; }
+      } else if (ln.a != null) {
+        html += esc(ln.a); show();
+        if (!(await wait(900, my))) { fill(st); return false; }
+        html += '<span class="p">' + esc(ln.v) + '</span>\n'; show();
+      }
+    }
+    el.innerHTML = html.replace(/\n$/, '');
+    return true;
+  }
+  function fill(st) {
+    if (!st.term || st !== steps[cur]) return;
+    $('term').innerHTML = st.term.map(function (ln) {
+      if (ln.c != null) return '<span class="p">$ </span>' + esc(ln.c);
+      if (ln.o != null) return '<span class="o">' + esc(ln.o) + '</span>';
+      return esc(ln.a) + '<span class="p">' + esc(ln.v) + '</span>';
+    }).join('\n');
+  }
+
+  // ---------- progress ----------
+  var chBox = $('chapters'), segBox = $('segs');
+  CH.forEach(function (name, c) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = name;
+    b.addEventListener('click', function () { go(steps.findIndex(function (s) { return s.ch === c; })); });
+    chBox.appendChild(b);
+  });
+  steps.forEach(function (s, i) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.setAttribute('aria-label', 'Шаг ' + (i + 1) + ': ' + s.title); b.title = (i + 1) + '. ' + s.title;
+    if (i > 0 && steps[i - 1].ch !== s.ch) b.classList.add('gap');
+    b.addEventListener('click', function () { go(i); });
+    segBox.appendChild(b);
+  });
+  function updateProgress() {
+    Array.prototype.forEach.call(segBox.children, function (b, i) { b.classList.toggle('cur', i === cur); b.classList.toggle('done', i < cur); });
+    Array.prototype.forEach.call(chBox.children, function (b, c) { b.setAttribute('aria-current', String(c === steps[cur].ch)); });
+    $('prev').disabled = cur === 0;
+    $('next').disabled = cur === steps.length - 1;
+  }
+
+  // ---------- engine ----------
+  function readMs(st) {
+    var len = st.text.length + (st.details || []).join(' ').length;
+    return Math.max(5000, Math.min(15000, 2500 + len * 30));
+  }
+  function go(i) {
+    i = Math.max(0, Math.min(steps.length - 1, i));
+    cur = i; var my = ++run; clearTimeout(timer);
+    var st = steps[i];
+    tokens.textContent = '';
+    slotsOff(); wk(0); gpu(false);
+    setMode(st.mode || 'vulkan');
+    setNv(!!st.nv);
+    OV.forEach(function (id) { $(id).classList.toggle('show', (st.show || []).indexOf(id) !== -1); });
+    setFocus(st.focus || 'all');
+    renderPanel(st, i);
+    updateProgress();
+    Promise.all([st.anim ? st.anim(my) : Promise.resolve(true), typeTerm(st, my)]).then(function () {
+      if (my !== run || !playing) return;
+      timer = setTimeout(function () {
+        if (my !== run || !playing) return;
+        if (cur < steps.length - 1) go(cur + 1); else setPlaying(false);
+      }, readMs(st) * (K || 1));
+    });
+  }
+  function setPlaying(p) {
+    playing = p;
+    $('playlabel').textContent = p ? 'Пауза' : 'Смотреть';
+    $('playicon').innerHTML = p ? '<path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/>' : '<path d="M4 2.5v11l9-5.5z"/>';
+    if (p) { if (cur === steps.length - 1) go(0); else go(cur); } else clearTimeout(timer);
+  }
+  $('prev').addEventListener('click', function () { go(cur - 1); });
+  $('next').addEventListener('click', function () { go(cur + 1); });
+  $('replay').addEventListener('click', function () { go(cur); });
+  $('play').addEventListener('click', function () { setPlaying(!playing); });
+  document.addEventListener('keydown', function (e) {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    var tag = (e.target && e.target.tagName) || '';
+    if (e.key === 'ArrowRight') { e.preventDefault(); go(cur + 1); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); go(cur - 1); }
+    else if (e.key === ' ' && tag !== 'BUTTON' && tag !== 'A') { e.preventDefault(); setPlaying(!playing); }
+  });
+
+  var m = /^#s(\d+)$/.exec(location.hash || '');
+  go(m ? parseInt(m[1], 10) - 1 : 0);
+})();
+</script>
